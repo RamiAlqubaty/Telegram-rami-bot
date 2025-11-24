@@ -2,27 +2,44 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import random
 import os
+import time
 
-# =========================
+# =============================
 # إعدادات المطور
-# =========================
+# =============================
 DEVELOPER_NAME = "المطور"
 DEVELOPER_USERNAME = "@R_BF4"
 DEVELOPER_LINK = "https://t.me/R_BF4"
 
-# =========================
-# دوال تحميل الملفات
-# =========================
 
-def load_list_file(filename: str):
-    """تحميل ملف يحتوي على قائمة أسئلة (سطر لكل سؤال)"""
+# =============================
+# تحميل الردود التلقائية
+# =============================
+def load_auto_replies(filename="autoreplies.txt"):
+    replies = {}
+    if not os.path.exists(filename):
+        return replies
+    with open(filename, "r", encoding="utf-8") as f:
+        for line in f:
+            if "|" in line:
+                k, v = line.strip().split("|", 1)
+                replies[k.strip()] = v.strip()
+    return replies
+
+AUTO_REPLIES = load_auto_replies()
+
+
+# =============================
+# دوال تحميل الملفات
+# =============================
+def load_list_file(filename):
     if not os.path.exists(filename):
         return []
     with open(filename, "r", encoding="utf-8") as f:
         return [line.strip() for line in f if line.strip()]
 
-def load_general_questions(filename: str):
-    """تحميل ملف الأسئلة العامة بصيغة: سؤال|إجابة"""
+
+def load_general_questions(filename):
     if not os.path.exists(filename):
         return []
     data = []
@@ -33,21 +50,21 @@ def load_general_questions(filename: str):
                 data.append((q, a))
     return data
 
-def load_wyr(filename: str):
-    """تحميل أسئلة لو خيروك"""
-    return load_list_file(filename)
 
-# =========================
-# تحميل ملفات الأسئلة
-# =========================
+# =============================
+# تحميل الملفات
+# =============================
 
 KT_QUESTIONS = load_list_file("questions.txt")
 GENERAL_RIDDLES = load_general_questions("general_riddles.txt")
-WOULD_YOU_RATHER = load_wyr("would_you_rather.txt")
+WOULD_YOU_RATHER = load_list_file("would_you_rather.txt")
+WHO_QUESTIONS = load_list_file("who.txt")
+CRIMES = load_list_file("crimes.txt")
+FACTS = load_list_file("facts.txt")  # ← لعبة الحقائق الجديدة
 
-# قوائم افتراضية إذا لم توجد ملفات
+# قوائم افتراضية
 if not KT_QUESTIONS:
-    KT_QUESTIONS = ["كم عمرك؟", "ما هي هواياتك؟", "هل أنت شخص اجتماعي؟"]
+    KT_QUESTIONS = ["كم عمرك؟", "ما هي هواياتك؟"]
 
 if not GENERAL_RIDDLES:
     GENERAL_RIDDLES = [("ما عاصمة فرنسا؟", "باريس")]
@@ -55,134 +72,212 @@ if not GENERAL_RIDDLES:
 if not WOULD_YOU_RATHER:
     WOULD_YOU_RATHER = ["لو خيروك تعيش غني أو فقير مع من تحب؟"]
 
-# =========================
-# ردود تلقائية
-# =========================
-AUTO_REPLIES = {
-    "سلام": "وعليكم السلام ورحمة الله وبركاته 🌿",
-    "السلام عليكم": "وعليكم السلام ورحمة الله وبركاته 🤍",
-    "مرحبا": "مرحبا بك نورت 🌟",
-    "اهلا": "أهلاً وسهلاً 🙌",
-    "هلا": "هلا فيك 🤍",
-    "شلونك": "تمام دامك بخير 🌿",
-    "كيفكم": "تمام الحمدلله وانت؟ 😊",
-    "كرستيانو": "عمك الدون",
-    "عائشة": "فراشة القروب 🦋",
-    "عائشه": "فراشة القروب 🦋",
-    "رامي": "محور الكون",
-    "جنى": "ام هوشات",
-    "جنو": "ام هوشات",
-    "هبه": "صغنونه القروب ",
-    "زينب": " لطيفة القروب 💫",
+if not WHO_QUESTIONS:
+    WHO_QUESTIONS = ["من أكثر شخص يعجبك بالقروب؟"]
+
+if not CRIMES:
+    CRIMES = ["رجل مات في غرفة مغلقة | مات بسكتة قلبية"]
+
+if not FACTS:
+    FACTS = ["الحقيقة ليست دائمًا ما نراه، بل ما نفهمه."]
 
 
-}
+# =============================
+# ملفات حفظ الأسئلة المستخدمة
+# =============================
+def load_used(filename):
+    if not os.path.exists(filename):
+        return set()
+    with open(filename, "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f if line.strip())
 
-# =========================
+
+def save_used(filename, value):
+    with open(filename, "a", encoding="utf-8") as f:
+        f.write(value + "\n")
+
+
+USED_KT = load_used("used_kt.txt")
+USED_GENERAL = load_used("used_general.txt")
+USED_WYR = load_used("used_wyr.txt")
+USED_WHO = load_used("used_who.txt")
+USED_CRIMES = load_used("used_crimes.txt")
+USED_FACTS = load_used("used_facts.txt")  # ← مستخدم للحقائق
+
+
+# =============================
+# تجاهل الرسائل القديمة
+# =============================
+BOT_START_TIME = time.time()
+
+
+# =============================
 # دوال مساعدة
-# =========================
-def normalize_text(text: str) -> str:
-    t = text.strip().lower()
-    t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    t = t.replace("ة", "ه")
+# =============================
+def normalize_text(t):
+    t = t.strip().lower()
+    t = t.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ة", "ه")
     return t
 
-def is_answer_word(text: str):
-    t = normalize_text(text)
-    return t in ["اجابه", "الاجابه", "جواب"]
 
-# =========================
+def is_answer_word(text):
+    return normalize_text(text) in ["اجابه", "الاجابه", "جواب"]
+
+
+# =============================
 # أوامر البوت
-# =========================
+# =============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "مرحبًا بك في بوت الأسئلة 👋\n\n"
+    global BOT_START_TIME
+    BOT_START_TIME = time.time()
+
+    await update.message.reply_text(
+        "تم تفعيل البوت 👋\n"
         "الأوامر:\n"
-        "- كتت → سؤال صراحة\n"
-        "- عام → سؤال عام أو لغز\n"
-        "- لو → سؤال لو خيروك\n"
-        "- اجابة → لإظهار حل آخر سؤال عام\n\n"
-        "يعمل البوت في القروبات بدون منشن."
+        "كتت - عام - لو - من - جريمة - حقائق - حل الجريمة"
     )
-    await update.message.reply_text(text)
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "الأوامر:\nكتت - عام - لو - اجابة\n"
-        "الردود التلقائية: سلام، مرحبا، هلا… إلخ"
-    )
+    await update.message.reply_text("الأوامر: كتت - عام - لو - من - جريمة - حقائق - حل الجريمة")
+
 
 async def developer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        f"معلومات المطور:\n{DEVELOPER_NAME}\n{DEVELOPER_USERNAME}\n{DEVELOPER_LINK}"
+        f"المطور:\n{DEVELOPER_NAME}\n{DEVELOPER_USERNAME}\n{DEVELOPER_LINK}"
     )
 
-# =========================
+
+# =============================
 # استقبال الرسائل
-# =========================
+# =============================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    message_time = update.message.date.timestamp()
     text = update.message.text.strip()
     user_data = context.user_data
 
-    # إزالة المنشن في القروبات
+    if message_time < BOT_START_TIME:
+        return
+
     if "@" in text:
         text = text.split("@")[0].strip()
 
-    # ======================
-    # الردود التلقائية
     normalized = normalize_text(text)
-    for key in AUTO_REPLIES:
+
+    # ===== الردود التلقائية =====
+    for key, reply in AUTO_REPLIES.items():
         if normalized.startswith(normalize_text(key)):
-            await update.message.reply_text(AUTO_REPLIES[key])
+            await update.message.reply_text(reply)
             return
 
-    # ======================
-    # كتت
+    # ===== كتت =====
     if text == "كتت":
-        q = random.choice(KT_QUESTIONS)
+        remaining = [q for q in KT_QUESTIONS if q not in USED_KT]
+        if not remaining:
+            USED_KT.clear(); open("used_kt.txt", "w").close(); remaining = KT_QUESTIONS.copy()
+        q = random.choice(remaining)
+        USED_KT.add(q); save_used("used_kt.txt", q)
         await update.message.reply_text(q)
         return
 
-    # ======================
-    # عام
+    # ===== عام =====
     if text == "عام":
-        q, a = random.choice(GENERAL_RIDDLES)
+        remaining = [(q, a) for (q, a) in GENERAL_RIDDLES if q not in USED_GENERAL]
+        if not remaining:
+            USED_GENERAL.clear(); open("used_general.txt", "w").close(); remaining = GENERAL_RIDDLES.copy()
+        q, a = random.choice(remaining)
+        USED_GENERAL.add(q); save_used("used_general.txt", q)
         user_data["last_general_question"] = q
         user_data["last_general_answer"] = a
         await update.message.reply_text(q)
         return
 
-    # ======================
-    # لو
+    # ===== لو =====
     if text == "لو":
-        q = random.choice(WOULD_YOU_RATHER)
+        remaining = [q for q in WOULD_YOU_RATHER if q not in USED_WYR]
+        if not remaining:
+            USED_WYR.clear(); open("used_wyr.txt", "w").close(); remaining = WOULD_YOU_RATHER.copy()
+        q = random.choice(remaining)
+        USED_WYR.add(q); save_used("used_wyr.txt", q)
         await update.message.reply_text(q)
         return
 
-    # ======================
-    # اجابة
-    if is_answer_word(text):
-        if "last_general_answer" in user_data:
-            q = user_data["last_general_question"]
-            a = user_data["last_general_answer"]
-            await update.message.reply_text(f"السؤال كان:\n{q}\n\nالإجابة:\n{a}")
-        else:
-            await update.message.reply_text("لا يوجد سؤال عام محفوظ.")
+    # ===== من =====
+    if text == "من":
+        remaining = [q for q in WHO_QUESTIONS if q not in USED_WHO]
+        if not remaining:
+            USED_WHO.clear(); open("used_who.txt", "w").close(); remaining = WHO_QUESTIONS.copy()
+        q = random.choice(remaining)
+        USED_WHO.add(q); save_used("used_who.txt", q)
+        await update.message.reply_text(q)
         return
 
-    # ======================
-    # التحقق من الإجابة
+    # ===== جريمة =====
+    if text == "جريمة":
+        remaining = [c for c in CRIMES if c not in USED_CRIMES]
+        if not remaining:
+            USED_CRIMES.clear(); open("used_crimes.txt", "w").close(); remaining = CRIMES.copy()
+
+        crime = random.choice(remaining)
+        USED_CRIMES.add(crime); save_used("used_crimes.txt", crime)
+
+        if "|" in crime:
+            story, solution = crime.split("|", 1)
+            user_data["crime_story"] = story.strip()
+            user_data["crime_solution"] = solution.strip()
+            await update.message.reply_text(story.strip())
+        else:
+            await update.message.reply_text(crime)
+        return
+
+    # ===== حقائق (اللعبة الجديدة) =====
+    if text == "حقائق":
+        remaining = [f for f in FACTS if f not in USED_FACTS]
+
+        if not remaining:
+            USED_FACTS.clear()
+            open("used_facts.txt", "w").close()
+            remaining = FACTS.copy()
+
+        fact = random.choice(remaining)
+        USED_FACTS.add(fact)
+        save_used("used_facts.txt", fact)
+
+        await update.message.reply_text(f"🧠 حقيقة:\n{fact}")
+        return
+
+    # ===== حل الجريمة =====
+    if normalized in ["حل الجريمة", "حل", "اجابة الجريمة"]:
+        if "crime_solution" in user_data:
+            await update.message.reply_text(
+                f"🔍 حل الجريمة:\n{user_data['crime_solution']}"
+            )
+        else:
+            await update.message.reply_text("لا توجد جريمة لحلها الآن.")
+        return
+
+    # ===== اجابة =====
+    if is_answer_word(text):
+        if "last_general_answer" in user_data:
+            await update.message.reply_text(
+                f"السؤال كان:\n{user_data['last_general_question']}\n\n"
+                f"الإجابة:\n{user_data['last_general_answer']}"
+            )
+        else:
+            await update.message.reply_text("لا يوجد سؤال سابق.")
+        return
+
+    # ===== التحقق من إجابة لعبة عام =====
     if "last_general_answer" in user_data:
         if normalize_text(text) == normalize_text(user_data["last_general_answer"]):
             await update.message.reply_text("✔ إجابتك صحيحة!")
-            return
+        return
 
-    # ======================
-    # رد افتراضي
 
-# =========================
+# =============================
 # تشغيل البوت
-# =========================
+# =============================
 app = ApplicationBuilder().token("8332331263:AAGMD6a5MoGkZ8s1OVeLqsY6x58OnM_Z2bc").build()
 
 app.add_handler(CommandHandler("start", start))
