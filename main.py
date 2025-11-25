@@ -13,6 +13,36 @@ DEVELOPER_LINK = "https://t.me/R_BF4"
 
 
 # =============================
+# نص قائمة الألعاب
+# =============================
+GAMES_HELP_TEXT = (
+    "🎮 *قائمة الألعاب الموجودة في البوت:*\n\n"
+    "1️⃣ *كتت*\n"
+    "لعبة أسئلة شخصية ممتعة.\n"
+    "الأمر المستخدم: `كتت`\n\n"
+    "2️⃣ *عام*\n"
+    "أسئلة عامة وألغاز، ويمكنك طلب الإجابة بكتابة كلمة (اجابة).\n"
+    "الأمر المستخدم: `عام`\n\n"
+    "3️⃣ *لو*\n"
+    "لعبة لو خيروك، أسئلة اختيار بين شيئين.\n"
+    "الأمر المستخدم: `لو`\n\n"
+    "4️⃣ *من*\n"
+    "أسئلة من هو؟ مثل: من أكثر شخص يعجبك بالقروب؟\n"
+    "الأمر المستخدم: `من`\n\n"
+    "5️⃣ *جريمة*\n"
+    "لعبة جريمة غامضة، يعطيك القصة وتحاول تحلها.\n"
+    "الأمر المستخدم: `جريمة`\n\n"
+    "6️⃣ *حل الجريمة*\n"
+    "تستخدمها بعد ما يعطيك البوت جريمة، عشان يجيب لك الحل.\n"
+    "الأوامر: `حل الجريمة` أو `حل` أو `اجابة الجريمة`\n\n"
+    "7️⃣ *حقائق*\n"
+    "لعبة الحقائق: يرسل لك حقيقة عشوائية.\n"
+    "الأمر المستخدم: `حقائق`\n\n"
+    "✨ لعرض القائمة من جديد: اكتب (العاب) أو (الالعاب)."
+)
+
+
+# =============================
 # تحميل الردود التلقائية
 # =============================
 def load_auto_replies(filename="autoreplies.txt"):
@@ -54,13 +84,12 @@ def load_general_questions(filename):
 # =============================
 # تحميل الملفات
 # =============================
-
 KT_QUESTIONS = load_list_file("questions.txt")
 GENERAL_RIDDLES = load_general_questions("general_riddles.txt")
 WOULD_YOU_RATHER = load_list_file("would_you_rather.txt")
 WHO_QUESTIONS = load_list_file("who.txt")
 CRIMES = load_list_file("crimes.txt")
-FACTS = load_list_file("facts.txt")  # ← لعبة الحقائق الجديدة
+FACTS = load_list_file("facts.txt")
 
 # قوائم افتراضية
 if not KT_QUESTIONS:
@@ -83,7 +112,7 @@ if not FACTS:
 
 
 # =============================
-# ملفات حفظ الأسئلة المستخدمة
+# حفظ الأسئلة المستخدمة
 # =============================
 def load_used(filename):
     if not os.path.exists(filename):
@@ -102,7 +131,7 @@ USED_GENERAL = load_used("used_general.txt")
 USED_WYR = load_used("used_wyr.txt")
 USED_WHO = load_used("used_who.txt")
 USED_CRIMES = load_used("used_crimes.txt")
-USED_FACTS = load_used("used_facts.txt")  # ← مستخدم للحقائق
+USED_FACTS = load_used("used_facts.txt")
 
 
 # =============================
@@ -130,21 +159,26 @@ def is_answer_word(text):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global BOT_START_TIME
     BOT_START_TIME = time.time()
-
     await update.message.reply_text(
         "تم تفعيل البوت 👋\n"
-        "الأوامر:\n"
-        "كتت - عام - لو - من - جريمة - حقائق - حل الجريمة"
+        "الأوامر:\nكتت - عام - لو - من - جريمة - حقائق - حل الجريمة - العاب"
     )
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("الأوامر: كتت - عام - لو - من - جريمة - حقائق - حل الجريمة")
+    await update.message.reply_text("الأوامر: كتت - عام - لو - من - جريمة - حقائق - حل الجريمة - العاب")
 
 
 async def developer_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"المطور:\n{DEVELOPER_NAME}\n{DEVELOPER_USERNAME}\n{DEVELOPER_LINK}"
+    )
+
+
+async def games_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        GAMES_HELP_TEXT,
+        parse_mode="Markdown"
     )
 
 
@@ -170,6 +204,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if normalized.startswith(normalize_text(key)):
             await update.message.reply_text(reply)
             return
+
+    # ===== قائمة الألعاب =====
+    if normalized in ["العاب", "الالعاب"]:
+        await update.message.reply_text(
+            GAMES_HELP_TEXT,
+            parse_mode="Markdown"
+        )
+        return
 
     # ===== كتت =====
     if text == "كتت":
@@ -231,7 +273,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(crime)
         return
 
-    # ===== حقائق (اللعبة الجديدة) =====
+    # ===== حقائق =====
     if text == "حقائق":
         remaining = [f for f in FACTS if f not in USED_FACTS]
 
@@ -283,6 +325,7 @@ app = ApplicationBuilder().token("8332331263:AAGMD6a5MoGkZ8s1OVeLqsY6x58OnM_Z2bc
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("help", help_command))
 app.add_handler(CommandHandler("developer", developer_command))
+app.add_handler(CommandHandler("games", games_command))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 app.run_polling()
