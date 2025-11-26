@@ -380,10 +380,14 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 # =============================
 @web_app.route("/webhook", methods=["POST"])
 def webhook_receiver():
-    update_data = request.get_json()
+    update_data = request.get_json(force=True)
     update = Update.de_json(update_data, app.bot)
-    asyncio.get_event_loop().create_task(app.process_update(update))
+
+    # هنا نشغّل الكوروتين بشكل متزامن لكل طلب
+    asyncio.run(app.process_update(update))
+
     return "OK", 200
+
 
 
 
@@ -395,6 +399,7 @@ async def set_webhook():
     await app.bot.set_webhook(url="https://telegram-rami-bot-1.onrender.com/webhook")
 
 asyncio.run(set_webhook())
+
 
 
 
