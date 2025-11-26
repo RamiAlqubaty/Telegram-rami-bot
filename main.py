@@ -561,6 +561,6 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 threading.Thread(target=run_web_server, daemon=True).start()
 threading.Thread(target=internal_keepalive, daemon=True).start()
 
-bot.delete_webhook(drop_pending_updates=True)
 app.run_polling()
+
 
