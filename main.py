@@ -391,7 +391,8 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 # =============================
 async def set_webhook():
     await app.bot.delete_webhook()
-    await app.bot.set_webhook(url=WEBHOOK_URL)
-
+    await app.bot.set_webhook(url="https://telegram-rami-bot-1.onrender.com/webhook")
 
 asyncio.run(set_webhook())
+
+
