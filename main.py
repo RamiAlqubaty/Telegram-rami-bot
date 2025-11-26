@@ -365,18 +365,7 @@ def dashboard():
 
 
 # =============================
-# Telegram Webhook Receiver
-# =============================
-@web_app.route("/webhook", methods=["POST"])
-def webhook_receiver():
-    update_data = request.get_json()
-    update = Update.de_json(update_data, app.bot)
-    asyncio.get_event_loop().create_task(app.process_update(update))
-    return "OK", 200
-
-
-# =============================
-# INIT BOT
+# INIT BOT  (move this UP before webhook!)
 # =============================
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -387,6 +376,18 @@ app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 
 # =============================
+# Telegram Webhook Receiver
+# =============================
+@web_app.route("/webhook", methods=["POST"])
+def webhook_receiver():
+    update_data = request.get_json()
+    update = Update.de_json(update_data, app.bot)
+    asyncio.get_event_loop().create_task(app.process_update(update))
+    return "OK", 200
+
+
+
+# =============================
 # SET WEBHOOK
 # =============================
 async def set_webhook():
@@ -394,5 +395,6 @@ async def set_webhook():
     await app.bot.set_webhook(url="https://telegram-rami-bot-1.onrender.com/webhook")
 
 asyncio.run(set_webhook())
+
 
 
