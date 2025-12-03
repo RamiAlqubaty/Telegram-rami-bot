@@ -1,31 +1,42 @@
 # ============================================
-# Telegram Game Bot - Webhook + Dashboard + Broadcast
+# Telegram Game Bot - Webhook + Dashboard + Broadcast + Truth/Dare Game
 # For Render (gunicorn main:web_app)
 # ============================================
 
 from typing import Dict
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
     ContextTypes,
+    CallbackQueryHandler,
     filters,
 )
 from telegram.request import HTTPXRequest
 from flask import Flask, request, render_template_string
-from datetime import datetime
+from datetime import datetime, timezone
 import random
 import os
 import time
 import asyncio
 import json
+from dotenv import load_dotenv
 
 # =============================
 # SETTINGS
 # =============================
+load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "Rami24545")
+RUN_MODE = os.getenv("RUN_MODE", "polling").lower()
+
+print("BOT_TOKEN loaded:", "****" if BOT_TOKEN else None)
+print("RUN_MODE:", RUN_MODE)
 
 if not BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN not found in Secrets!")
@@ -36,7 +47,7 @@ WEBHOOK_URL = "https://telegram-rami-bot-1.onrender.com/webhook"
 STATS_FILE = "stats.json"
 
 # اسم المستخدم للمطور (بدون @)
-DEVELOPER_USERNAME_RAW = "R_BF4"
+DEVELOPER_USERNAME_RAW = "R_q1j"
 
 # =============================
 # Flask App
@@ -57,8 +68,8 @@ BOT_START_TIME = time.time()
 # Developer Info
 # =============================
 DEVELOPER_NAME = "المطور"
-DEVELOPER_USERNAME = "@R_BF4"
-DEVELOPER_LINK = "https://t.me/R_BF4"
+DEVELOPER_USERNAME = "@R_q1j"
+DEVELOPER_LINK = "https://t.me/R_q1j"
 
 # =============================
 # Games & Help Texts
@@ -79,6 +90,8 @@ GAMES_HELP_TEXT = (
     "    🕵 بعد التفكير اكتب: `حل` أو `حل الجريمة`\n\n"
     "6️⃣ *حقائق* — حقائق عشوائية.\n"
     "    ⌨️ اكتب: `حقائق`\n\n"
+    "7️⃣ *تحدي أو صراحة* — لعبة جماعية بالأزرار.\n"
+    "    ⌨️ اكتب: `تحدي` أو `صراحه` لبدء جلسة جديدة.\n\n"
     "✨ لعرض هذه القائمة اكتب: `العاب` أو استخدم الأمر: `/games`"
 )
 
@@ -87,16 +100,43 @@ HELP_TEXT = (
     "البوت يقدم:\n"
     "• ألعاب ترفيهية للقروبات والخاص.\n"
     "• ألغاز وأسئلة عامة.\n"
-    "• حقائق عشوائية.\n\n"
+    "• حقائق عشوائية.\n"
+    "• لعبة تحدي/صراحة تفاعلية.\n\n"
     "📌 *الأوامر الرئيسية:*\n"
     "• `/start`  — رسالة الترحيب.\n"
     "• `/help`   — شرح تفصيلي.\n"
     "• `/games`  — عرض قائمة الألعاب.\n"
     "• `/developer` — معلومات المطور.\n\n"
     "🎮 *الألعاب:* \n"
-    "استخدم الأوامر: `كتت`، `عام`، `لو`، `من`، `جريمة`، `حقائق`.\n\n"
+    "استخدم الأوامر: `كتت`، `عام`، `لو`، `من`، `جريمة`، `حقائق`، `تحدي`، `صراحه`.\n\n"
     "للمزيد عن الألعاب استخدم `/games`."
 )
+
+# =============================
+# Helpers (text & developer)
+# =============================
+def normalize_text(t: str):
+    return (
+        t.strip()
+        .lower()
+        .replace("أ", "ا")
+        .replace("إ", "ا")
+        .replace("آ", "ا")
+        .replace("ة", "ه")
+    )
+
+
+def is_answer_word(t: str):
+    return normalize_text(t) in ["اجابه", "جواب", "الاجابه"]
+
+
+def is_developer(update: Update) -> bool:
+    user = update.effective_user
+    if not user:
+        return False
+    if not user.username:
+        return False
+    return user.username.lower() == DEVELOPER_USERNAME_RAW.lower()
 
 # =============================
 # File Helpers
@@ -132,6 +172,28 @@ def save_used(filename: str, value: str):
         f.write(value + "\n")
 
 
+def load_autoreplies(filename: str) -> Dict[str, str]:
+    """
+    يحمّل ردود سريعة من ملف بالشكل:
+    كلمة=الرد الكامل
+    ويتم تخزين المفتاح بعد normalize_text كي يكون التطابق أسهل.
+    """
+    if not os.path.exists(filename):
+        return {}
+
+    data: Dict[str, str] = {}
+    with open(filename, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key_norm = normalize_text(key)
+            data[key_norm] = value.strip()
+    return data
+
 # =============================
 # Load Game Files
 # =============================
@@ -148,6 +210,58 @@ USED_WYR = load_used("used_wyr.txt")
 USED_WHO = load_used("used_who.txt")
 USED_CRIMES = load_used("used_crimes.txt")
 USED_FACTS = load_used("used_facts.txt")
+
+AUTOREPLIES = load_autoreplies("autoreplies.txt")
+
+# =============================
+# Truth/Dare Game Files (جديدة)
+# =============================
+TRUTH_QUESTIONS = load_list_file("truth.txt") or [
+    "ما هي أكثر صفة تحبها في نفسك؟",
+    "ما هو أكثر موقف مضحك حصل لك؟",
+    "لو تقدر ترجع بالزمن، أي سنة ترجع؟",
+]
+
+DARE_QUESTIONS = load_list_file("dare.txt") or [
+    "غيّر اسمك في القروب لاسم مضحك لمدة 10 دقائق.",
+    "ارسل آخر إيموجي استخدمته وقل لنا قصته 😹",
+    "اكتب رسالة مدح لآخر واحد كتب في القروب.",
+]
+
+USED_TRUTH = load_used("used_truth.txt")
+USED_DARE = load_used("used_dare.txt")
+
+
+def choose_unique_question(pool, used_set, filename: str) -> str:
+    """
+    يختار سؤال بدون تكرار حتى تنتهي القائمة، بعدها يعيد ضبط الاستخدام.
+    """
+    if not pool:
+        return "لا توجد أسئلة حالياً."
+
+    available = [q for q in pool if q not in used_set]
+    if not available:
+        used_set.clear()
+        try:
+            open(filename, "w", encoding="utf-8").close()
+        except Exception:
+            pass
+        available = pool
+
+    q = random.choice(available)
+    used_set.add(q)
+    try:
+        with open(filename, "a", encoding="utf-8") as f:
+            f.write(q + "\n")
+    except Exception:
+        pass
+    return q
+
+
+def display_name_from_user(user) -> str:
+    if user.username:
+        return f"@{user.username}"
+    return user.full_name or str(user.id)
 
 # =============================
 # Stats Persistence
@@ -184,33 +298,6 @@ def save_stats():
 
 
 load_stats()
-
-# =============================
-# Helpers
-# =============================
-def normalize_text(t: str):
-    return (
-        t.strip()
-        .lower()
-        .replace("أ", "ا")
-        .replace("إ", "ا")
-        .replace("آ", "ا")
-        .replace("ة", "ه")
-    )
-
-
-def is_answer_word(t: str):
-    return normalize_text(t) in ["اجابه", "جواب", "الاجابه"]
-
-
-def is_developer(update: Update) -> bool:
-    user = update.effective_user
-    if not user:
-        return False
-    if not user.username:
-        return False
-    return user.username.lower() == DEVELOPER_USERNAME_RAW.lower()
-
 
 # =============================
 # Bot Commands
@@ -278,16 +365,274 @@ async def podcast_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent += 1
         except Exception:
             failed += 1
-            # ممكن يكون البوت مطرود من هذا القروب، نتركه في الإحصائيات كما هو
 
     await update.message.reply_text(
         f"✅ تم إرسال الرسالة إلى {sent} جروب.\n"
         f"❌ فشل الإرسال إلى {failed} (ربما البوت مطرود من بعضها)."
     )
 
+# =============================
+# Truth/Dare Game Logic (جديد)
+# =============================
+async def td_start_new_turn(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """
+    يبدأ دور جديد: يختار لاعب عشوائي من المشاركين بدون تكرار
+    حتى يمر على الجميع، ثم يعيد الدورة.
+    """
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+    if not game or game.get("status") != "running":
+        return
+
+    participants = list(game.get("participants", {}).keys())
+    if not participants:
+        await context.bot.send_message(chat_id=chat_id, text="لا يوجد لاعبين في اللعبة.")
+        game["status"] = "ended"
+        return
+
+    remaining = game.get("remaining_players")
+    if not remaining:
+        remaining = participants.copy()
+
+    player_id = random.choice(remaining)
+    remaining.remove(player_id)
+
+    game["remaining_players"] = remaining
+    game["current_player_id"] = player_id
+    game["current_round"] = {
+        "player_id": player_id,
+        "final_choice": None,
+        "switched": False,
+    }
+
+    player_info = game["participants"].get(player_id)
+    mention = player_info.get("name") if player_info else str(player_id)
+    if player_info and player_info.get("username"):
+        mention = f"@{player_info['username']}"
+
+    text = (
+        f"🎯 الدور الآن على {mention}\n"
+        "اختر: تحدي أو صراحة 👇"
+    )
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔥 تحدي", callback_data="td_choose:dare"),
+            InlineKeyboardButton("💬 صراحة", callback_data="td_choose:truth"),
+        ]
+    ])
+
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
+
+async def td_close_join_phase(context: ContextTypes.DEFAULT_TYPE):
+    """
+    تُستدعى آلياً بعد دقيقة من بدء اللعبة لإغلاق الانضمام.
+    """
+    job = context.job
+    chat_id = job.chat_id
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") != "collecting":
+        return
+
+    participants = list(game.get("participants", {}).values())
+    if not participants:
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="⏰ انتهى وقت الانضمام ولم ينضم أحد للعبة."
+        )
+        game["status"] = "ended"
+        return
+
+    game["status"] = "waiting_start"
+    game["remaining_players"] = list(game["participants"].keys())
+
+    lines = ["⏰ انتهى وقت الانضمام!\n", "اللاعبون المشاركون:"]
+    for p in participants:
+        if p.get("username"):
+            lines.append(f"- @{p['username']}")
+        else:
+            lines.append(f"- {p['name']}")
+    text = "\n".join(lines)
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ بدء اللعبة", callback_data="td_start")]
+    ])
+
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=keyboard)
+
+
+async def td_join_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") != "collecting":
+        await query.answer("لا توجد لعبة مفتوحة للانضمام حالياً.", show_alert=True)
+        return
+
+    user = query.from_user
+    participants = game.setdefault("participants", {})
+
+    if user.id in participants:
+        await query.answer("أنت منضم للعبة بالفعل ✅", show_alert=False)
+        return
+
+    participants[user.id] = {
+        "id": user.id,
+        "name": user.full_name,
+        "username": user.username,
+    }
+
+    await query.answer("تم انضمامك للعبة 🎮", show_alert=False)
+
+    try:
+        count = len(participants)
+        await query.message.edit_text(
+            f"🕹 *جولة جديدة: تحدي أو صراحة*\n"
+            f"عدد اللاعبين المنضمين حتى الآن: {count}\n"
+            "اضغط على الزر بالأسفل للانضمام خلال دقيقة واحدة ⏱",
+            reply_markup=query.message.reply_markup,
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+async def td_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") not in ("waiting_start", "collecting"):
+        await query.answer("لا يمكن بدء اللعبة حالياً.", show_alert=True)
+        return
+
+    participants = list(game.get("participants", {}).keys())
+    if len(participants) < 1:
+        await query.answer("لا يوجد لاعبين كفاية لبدء اللعبة.", show_alert=True)
+        game["status"] = "ended"
+        return
+
+    game["status"] = "running"
+
+    await query.message.reply_text("✅ تم بدء لعبة تحدي/صراحة! لنبدأ 🔥")
+    await td_start_new_turn(query.message.chat.id, context)
+
+
+async def td_choose_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data  # مثال: "td_choose:dare"
+    await query.answer()
+
+    _, choice = data.split(":", 1)  # "truth" أو "dare"
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") != "running":
+        await query.answer("لا توجد لعبة نشطة حالياً.", show_alert=True)
+        return
+
+    user = query.from_user
+    current_player_id = game.get("current_player_id")
+    if user.id != current_player_id:
+        await query.answer("هذا الدور ليس دورك 😅", show_alert=True)
+        return
+
+    round_state = game.get("current_round") or {}
+    round_state["player_id"] = user.id
+    round_state["final_choice"] = choice  # "truth" أو "dare"
+    round_state["switched"] = False
+    game["current_round"] = round_state
+
+    player_display = display_name_from_user(user)
+
+    if choice == "dare":
+        q = choose_unique_question(DARE_QUESTIONS, USED_DARE, "used_dare.txt")
+        text = f"🔥 *تحدي لـ {player_display}:*\n{q}"
+        switch_button = InlineKeyboardButton("↩️ تحويل إلى صراحة", callback_data="td_switch:truth")
+    else:
+        q = choose_unique_question(TRUTH_QUESTIONS, USED_TRUTH, "used_truth.txt")
+        text = f"💬 *صراحة لـ {player_display}:*\n{q}"
+        switch_button = InlineKeyboardButton("↩️ تحويل إلى تحدي", callback_data="td_switch:dare")
+
+    next_button = InlineKeyboardButton("🔁 لاعب جديد", callback_data="td_next")
+
+    keyboard = InlineKeyboardMarkup([
+        [switch_button],
+        [next_button],
+    ])
+
+    await query.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+async def td_switch_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data  # مثال: "td_switch:truth"
+    await query.answer()
+
+    _, new_choice = data.split(":", 1)  # "truth" أو "dare"
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") != "running":
+        await query.answer("لا توجد لعبة نشطة حالياً.", show_alert=True)
+        return
+
+    user = query.from_user
+    round_state = game.get("current_round")
+    if not round_state or round_state.get("player_id") != user.id:
+        await query.answer("هذا الخيار ليس دورك 😅", show_alert=True)
+        return
+
+    if round_state.get("switched"):
+        await query.answer("لا يمكنك التحويل أكثر من مرة في نفس الدور.", show_alert=True)
+        return
+
+    round_state["final_choice"] = new_choice
+    round_state["switched"] = True
+    game["current_round"] = round_state
+
+    player_display = display_name_from_user(user)
+
+    if new_choice == "truth":
+        q = choose_unique_question(TRUTH_QUESTIONS, USED_TRUTH, "used_truth.txt")
+        text = (
+            f"🔄 تم التحويل إلى *صراحة* لـ {player_display}:\n"
+            f"{q}"
+        )
+    else:
+        q = choose_unique_question(DARE_QUESTIONS, USED_DARE, "used_dare.txt")
+        text = (
+            f"🔄 تم التحويل إلى *تحدي* لـ {player_display}:\n"
+            f"{q}"
+        )
+
+    next_button = InlineKeyboardButton("🔁 لاعب جديد", callback_data="td_next")
+    keyboard = InlineKeyboardMarkup([[next_button]])
+
+    await query.message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+
+async def td_next_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    chat_data = context.chat_data
+    game = chat_data.get("truth_dare_game")
+
+    if not game or game.get("status") != "running":
+        await query.answer("لا توجد لعبة نشطة حالياً.", show_alert=True)
+        return
+
+    await td_start_new_turn(query.message.chat.id, context)
 
 # =============================
-# Message Handler (games & stats)
+# Message Handler (games, stats, autoreplies)
 # =============================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global TOTAL_MESSAGES
@@ -310,16 +655,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         UNIQUE_PRIVATE_CHATS.add(chat.id)
 
-    bucket = datetime.utcnow().strftime("%Y-%m-%d %H:00")
+    bucket = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:00")
     ACTIVITY_BUCKETS[bucket] = ACTIVITY_BUCKETS.get(bucket, 0) + 1
 
     # حفظ الإحصائيات بعد كل رسالة
     save_stats()
 
+    # ===== لعبة تحدي/صراحة - إنشاء جلسة جديدة =====
+    if normalized in ["تحدي", "صراحه", "تحدي او صراحه", "تحدي ولا صراحه"]:
+        game = context.chat_data.get("truth_dare_game")
+        if game and game.get("status") in ("collecting", "running"):
+            await update.message.reply_text("هناك لعبة تحدي/صراحة تعمل بالفعل في هذا القروب 🎮")
+            return
+
+        context.chat_data["truth_dare_game"] = {
+            "status": "collecting",
+            "starter_id": user.id,
+            "participants": {},
+            "remaining_players": [],
+            "current_player_id": None,
+            "current_round": None,
+        }
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ انضمام للعبة", callback_data="td_join")]
+        ])
+
+        msg = await update.message.reply_text(
+            "🕹 *جولة جديدة: تحدي أو صراحة*\n"
+            "اضغط على الزر بالأسفل للانضمام للعبة خلال دقيقة واحدة ⏱",
+            reply_markup=keyboard,
+            parse_mode="Markdown",
+        )
+
+        context.chat_data["truth_dare_game"]["join_message_id"] = msg.message_id
+
+        if context.job_queue:
+            context.job_queue.run_once(
+                td_close_join_phase,
+                when=60,
+                chat_id=chat.id,
+                name=f"td_join_{chat.id}",
+            )
+
+        return
+
     # ===== نصوص معينة =====
     if normalized in ["العاب", "الالعاب"]:
         await update.message.reply_text(GAMES_HELP_TEXT, parse_mode="Markdown")
         return
+
+    # ===== ردود سريعة من ملف autoreplies =====
+    if AUTOREPLIES:
+        reply = AUTOREPLIES.get(normalized)
+        if reply:
+            await update.message.reply_text(reply)
+            return
 
     # ===== الألعاب =====
 
@@ -428,7 +819,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         USED_FACTS.add(f)
         await update.message.reply_text("🧠 حقيقة:\n" + f)
         return
-
 
 # =============================
 # Dashboard (Professional UI)
@@ -577,7 +967,7 @@ h1 {
     </div>
 
     <div class="footer">
-        المطور: <a href="https://t.me/R_BF4" target="_blank">@R_BF4</a>
+        المطور: <a href="https://t.me/R_q1j" target="_blank">@R_q1j</a>
     </div>
 </div>
 
@@ -615,7 +1005,6 @@ new Chart(document.getElementById("chart"), {
 </html>
 """
 
-
 @web_app.route("/")
 def home():
     return "Bot is running via Webhook!"
@@ -650,7 +1039,7 @@ def dashboard():
     )
 
 # =============================
-# INIT BOT + GLOBAL EVENT LOOP
+# INIT BOT (مشترك بين الوضعين)
 # =============================
 request_httpx = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
 
@@ -661,37 +1050,46 @@ app = (
     .build()
 )
 
+# Register Handlers
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("help", help_cmd))
 app.add_handler(CommandHandler("developer", developer))
 app.add_handler(CommandHandler("games", games))
-app.add_handler(CommandHandler("podcast", podcast_broadcast))  # بودكاست = broadcast
+app.add_handler(CommandHandler("podcast", podcast_broadcast))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-# نستخدم event loop واحد في هذا الworker
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+# === Truth/Dare Callback Handlers (جديدة) ===
+app.add_handler(CallbackQueryHandler(td_join_callback, pattern="^td_join$"))
+app.add_handler(CallbackQueryHandler(td_start_callback, pattern="^td_start$"))
+app.add_handler(CallbackQueryHandler(td_choose_callback, pattern="^td_choose:"))
+app.add_handler(CallbackQueryHandler(td_switch_callback, pattern="^td_switch:"))
+app.add_handler(CallbackQueryHandler(td_next_callback, pattern="^td_next$"))
 
-# تهيئة البوت مرة واحدة
-loop.run_until_complete(app.initialize())
+# =====================================================
+# 🔵 Webhook Mode (للإنتاج على Render) - RUN_MODE=webhook
+# =====================================================
+if RUN_MODE == "webhook":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-# =============================
-# Webhook Receiver
-# =============================
-@web_app.route("/webhook", methods=["POST"])
-def webhook_receiver():
-    update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, app.bot)
+    async def init_and_set_webhook():
+        await app.initialize()
+        await app.start()
+        await app.bot.delete_webhook()
+        await app.bot.set_webhook(url=WEBHOOK_URL)
 
-    loop.run_until_complete(app.process_update(update))
+    loop.run_until_complete(init_and_set_webhook())
 
-    return "OK", 200
+    @web_app.route("/webhook", methods=["POST"])
+    def webhook_receiver():
+        update_data = request.get_json(force=True)
+        update = Update.de_json(update_data, app.bot)
+        loop.run_until_complete(app.process_update(update))
+        return "OK", 200
 
-# =============================
-# SET WEBHOOK
-# =============================
-async def set_webhook():
-    await app.bot.delete_webhook()
-    await app.bot.set_webhook(url=WEBHOOK_URL)
-
-loop.run_until_complete(set_webhook())
+# =====================================================
+# 🟢 Polling Mode (للتجربة محليًا) - RUN_MODE=polling
+# =====================================================
+if __name__ == "__main__" and RUN_MODE == "polling":
+    print("▶️ Test Bot running with polling...")
+    app.run_polling()
