@@ -25,15 +25,15 @@ import os
 import time
 import asyncio
 import json
-from dotenv import load_dotenv
+# from dotenv import load_dotenv
 
 # =============================
 # SETTINGS
 # =============================
-load_dotenv()
+# load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "Rami24545")
-RUN_MODE = os.getenv("RUN_MODE", "polling").lower()
+DASHBOARD_PASS = os.getenv("DASHBOARD_PASS")
+RUN_MODE = os.getenv("RUN_MODE").lower()
 
 print("BOT_TOKEN loaded:", "****" if BOT_TOKEN else None)
 print("RUN_MODE:", RUN_MODE)
@@ -1093,3 +1093,4 @@ if RUN_MODE == "webhook":
 if __name__ == "__main__" and RUN_MODE == "polling":
     print("▶️ Test Bot running with polling...")
     app.run_polling()
+
