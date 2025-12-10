@@ -25,15 +25,15 @@ import os
 import time
 import asyncio
 import json
-# from dotenv import load_dotenv
+from dotenv import load_dotenv
 
 # =============================
 # SETTINGS
 # =============================
-# load_dotenv()
+load_dotenv()
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DASHBOARD_PASS = os.getenv("DASHBOARD_PASS")
-RUN_MODE = os.getenv("RUN_MODE").lower()
+DASHBOARD_PASS = os.getenv("DASHBOARD_PASS", "Rami24545")
+RUN_MODE = os.getenv("RUN_MODE", "polling").lower()
 
 print("BOT_TOKEN loaded:", "****" if BOT_TOKEN else None)
 print("RUN_MODE:", RUN_MODE)
@@ -1069,35 +1069,27 @@ app.add_handler(CallbackQueryHandler(td_next_callback, pattern="^td_next$"))
 # 🔵 Webhook Mode (للإنتاج على Render) - RUN_MODE=webhook
 # =====================================================
 if RUN_MODE == "webhook":
-    from flask import Flask, request
-    import telegram
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
 
-    app = Application.builder().token(BOT_TOKEN).build()
-    flask_app = Flask(__name__)
-
-    @flask_app.post("/webhook")
-    async def webhook():
-        data = request.get_json(force=True)
-        update = telegram.Update.de_json(data, app.bot)
-        await app.process_update(update)
-        return "OK"
-
-    async def setup():
+    async def init_and_set_webhook():
+        await app.initialize()
+        await app.start()
         await app.bot.delete_webhook()
-        await app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+        await app.bot.set_webhook(url=WEBHOOK_URL)
 
-    asyncio.run(setup())
+    loop.run_until_complete(init_and_set_webhook())
 
-    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
-
+    @web_app.route("/webhook", methods=["POST"])
+    def webhook_receiver():
+        update_data = request.get_json(force=True)
+        update = Update.de_json(update_data, app.bot)
+        loop.run_until_complete(app.process_update(update))
+        return "OK", 200
 
 # =====================================================
 # 🟢 Polling Mode (للتجربة محليًا) - RUN_MODE=polling
 # =====================================================
-# if __name__ == "__main__" and RUN_MODE == "polling":
-#     print("▶️ Test Bot running with polling...")
-#     app.run_polling()
-
-
-
-
+if __name__ == "__main__" and RUN_MODE == "polling":
+    print("▶️ Test Bot running with polling...")
+    app.run_polling()
