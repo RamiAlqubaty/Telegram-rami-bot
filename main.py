@@ -1069,17 +1069,27 @@ app.add_handler(CallbackQueryHandler(td_next_callback, pattern="^td_next$"))
 # 🔵 Webhook Mode (للإنتاج على Render) - RUN_MODE=webhook
 # =====================================================
 if RUN_MODE == "webhook":
-    PORT = int(os.getenv("PORT", 10000))
+    from flask import Flask, request
+    import telegram
 
-    async def run():
-        await app.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            url_path="webhook",
-            webhook_url=f"{WEBHOOK_URL}/webhook",
-        )
+    app = Application.builder().token(BOT_TOKEN).build()
+    flask_app = Flask(__name__)
 
-    asyncio.run(run())
+    @flask_app.post("/webhook")
+    async def webhook():
+        data = request.get_json(force=True)
+        update = telegram.Update.de_json(data, app.bot)
+        await app.process_update(update)
+        return "OK"
+
+    async def setup():
+        await app.bot.delete_webhook()
+        await app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
+
+    asyncio.run(setup())
+
+    flask_app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
+
 
 # =====================================================
 # 🟢 Polling Mode (للتجربة محليًا) - RUN_MODE=polling
@@ -1087,6 +1097,7 @@ if RUN_MODE == "webhook":
 # if __name__ == "__main__" and RUN_MODE == "polling":
 #     print("▶️ Test Bot running with polling...")
 #     app.run_polling()
+
 
 
 
