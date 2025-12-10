@@ -1090,7 +1090,8 @@ if RUN_MODE == "webhook":
 # =====================================================
 # 🟢 Polling Mode (للتجربة محليًا) - RUN_MODE=polling
 # =====================================================
-if __name__ == "__main__" and RUN_MODE == "polling":
-    print("▶️ Test Bot running with polling...")
-    app.run_polling()
+# if __name__ == "__main__" and RUN_MODE == "polling":
+#     print("▶️ Test Bot running with polling...")
+#     app.run_polling()
+
 
