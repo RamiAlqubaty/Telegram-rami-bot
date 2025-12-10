@@ -1069,23 +1069,17 @@ app.add_handler(CallbackQueryHandler(td_next_callback, pattern="^td_next$"))
 # 🔵 Webhook Mode (للإنتاج على Render) - RUN_MODE=webhook
 # =====================================================
 if RUN_MODE == "webhook":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    PORT = int(os.getenv("PORT", 10000))
 
-    async def init_and_set_webhook():
-        await app.initialize()
-        await app.start()
-        await app.bot.delete_webhook()
-        await app.bot.set_webhook(url=WEBHOOK_URL)
+    async def run():
+        await app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path="webhook",
+            webhook_url=f"{WEBHOOK_URL}/webhook",
+        )
 
-    loop.run_until_complete(init_and_set_webhook())
-
-    @web_app.route("/webhook", methods=["POST"])
-    def webhook_receiver():
-        update_data = request.get_json(force=True)
-        update = Update.de_json(update_data, app.bot)
-        loop.run_until_complete(app.process_update(update))
-        return "OK", 200
+    asyncio.run(run())
 
 # =====================================================
 # 🟢 Polling Mode (للتجربة محليًا) - RUN_MODE=polling
@@ -1093,5 +1087,6 @@ if RUN_MODE == "webhook":
 # if __name__ == "__main__" and RUN_MODE == "polling":
 #     print("▶️ Test Bot running with polling...")
 #     app.run_polling()
+
 
 
